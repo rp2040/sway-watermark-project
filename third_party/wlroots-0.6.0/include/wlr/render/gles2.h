@@ -9,20 +9,12 @@
 #ifndef WLR_RENDER_GLES2_H
 #define WLR_RENDER_GLES2_H
 
-#include <stdint.h>
 #include <wlr/backend.h>
 #include <wlr/render/wlr_renderer.h>
 
 struct wlr_egl;
 
 struct wlr_renderer *wlr_gles2_renderer_create(struct wlr_egl *egl);
-
-void wlr_gles2_renderer_set_watermark(struct wlr_renderer *renderer,
-		bool enabled, float alpha, float phase, float freq,
-		bool use_tw_texture, bool use_jnd);
-
-void wlr_gles2_renderer_set_watermark_template(struct wlr_renderer *renderer,
-		const uint8_t *data, uint32_t width, uint32_t height);
 
 struct wlr_texture *wlr_gles2_texture_from_pixels(struct wlr_egl *egl,
 	enum wl_shm_format wl_fmt, uint32_t stride, uint32_t width, uint32_t height,

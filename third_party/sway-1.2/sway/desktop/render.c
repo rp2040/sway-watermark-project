@@ -26,7 +26,6 @@
 #include "sway/tree/root.h"
 #include "sway/tree/view.h"
 #include "sway/tree/workspace.h"
-#include "sway/watermark_runtime.h"
 
 struct render_data {
 	pixman_region32_t *damage;
@@ -1032,8 +1031,6 @@ render_overlay:
 	render_drag_icons(output, damage, &root->drag_icons);
 
 renderer_end:
-	// Stage-2 runtime hook: apply watermark overlay/stub even on low-damage frames.
-	watermark_runtime_apply(output, damage);
 	wlr_renderer_scissor(renderer, NULL);
 	wlr_output_render_software_cursors(wlr_output, damage);
 	wlr_renderer_end(renderer);

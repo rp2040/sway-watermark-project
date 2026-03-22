@@ -27,30 +27,10 @@ struct wlr_gles2_tex_shader {
 	GLint invert_y;
 	GLint tex;
 	GLint alpha;
-	GLint wm_enable;
-	GLint wm_alpha;
-	GLint wm_phase;
-	GLint wm_freq;
-	GLint wm_use_tex;
-	GLint wm_use_jnd;
-	GLint wm_tex_sampler;
 };
 
 struct wlr_gles2_renderer {
 	struct wlr_renderer wlr_renderer;
-
-	struct {
-		bool enabled;
-		float alpha;
-		float phase;
-		float freq;
-		bool use_tw_texture;
-		bool use_jnd;
-	} watermark;
-
-	GLuint wm_texture;
-	int wm_texture_width;
-	int wm_texture_height;
 
 	struct wlr_egl *egl;
 	const char *exts_str;
