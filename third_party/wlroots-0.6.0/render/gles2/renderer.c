@@ -110,6 +110,45 @@ static void draw_quad(void) {
 	glDisableVertexAttribArray(1);
 }
 
+static void gles2_ensure_wm_texture(struct wlr_gles2_renderer *renderer) {
+	if (renderer->wm_texture != 0) {
+		return;
+	}
+
+	const int tw_w = 64;
+	const int tw_h = 64;
+	uint8_t *data = calloc((size_t)tw_w * (size_t)tw_h, sizeof(uint8_t));
+	if (!data) {
+		return;
+	}
+
+	// Minimal Tw placeholder texture: deterministic checker/ring-like pattern.
+	for (int y = 0; y < tw_h; ++y) {
+		for (int x = 0; x < tw_w; ++x) {
+			int checker = ((x / 4) + (y / 4)) & 1;
+			int ring = (((x - tw_w / 2) * (x - tw_w / 2) +
+				(y - tw_h / 2) * (y - tw_h / 2)) / 36) & 1;
+			float v = checker ? 0.80f : 0.20f;
+			v = 0.65f * v + 0.35f * (ring ? 0.75f : 0.25f);
+			data[y * tw_w + x] = (uint8_t)(v * 255.0f);
+		}
+	}
+
+	glGenTextures(1, &renderer->wm_texture);
+	glBindTexture(GL_TEXTURE_2D, renderer->wm_texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, tw_w, tw_h, 0,
+		GL_LUMINANCE, GL_UNSIGNED_BYTE, data);
+
+	renderer->wm_texture_width = tw_w;
+	renderer->wm_texture_height = tw_h;
+	free(data);
+}
+
 static bool gles2_render_texture_with_matrix(struct wlr_renderer *wlr_renderer,
 		struct wlr_texture *wlr_texture, const float matrix[static 9],
 		float alpha) {
@@ -165,6 +204,18 @@ static bool gles2_render_texture_with_matrix(struct wlr_renderer *wlr_renderer,
 	glUniform1i(shader->invert_y, texture->inverted_y);
 	glUniform1i(shader->tex, 0);
 	glUniform1f(shader->alpha, alpha);
+	glUniform1f(shader->wm_enable, renderer->watermark.enabled ? 1.0f : 0.0f);
+	glUniform1f(shader->wm_alpha, renderer->watermark.alpha);
+	glUniform1f(shader->wm_phase, renderer->watermark.phase);
+	glUniform1f(shader->wm_freq, renderer->watermark.freq);
+	glUniform1f(shader->wm_use_tex, renderer->watermark.use_tw_texture ? 1.0f : 0.0f);
+	glUniform1f(shader->wm_use_jnd, renderer->watermark.use_jnd ? 1.0f : 0.0f);
+
+	gles2_ensure_wm_texture(renderer);
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, renderer->wm_texture);
+	glUniform1i(shader->wm_tex_sampler, 1);
+	glActiveTexture(GL_TEXTURE0);
 
 	draw_quad();
 
@@ -372,6 +423,9 @@ static void gles2_destroy(struct wlr_renderer *wlr_renderer) {
 	glDeleteProgram(renderer->shaders.tex_rgba.program);
 	glDeleteProgram(renderer->shaders.tex_rgbx.program);
 	glDeleteProgram(renderer->shaders.tex_ext.program);
+	if (renderer->wm_texture != 0) {
+		glDeleteTextures(1, &renderer->wm_texture);
+	}
 	POP_GLES2_DEBUG;
 
 	if (renderer->exts.debug_khr) {
@@ -380,6 +434,46 @@ static void gles2_destroy(struct wlr_renderer *wlr_renderer) {
 	}
 
 	free(renderer);
+}
+
+void wlr_gles2_renderer_set_watermark(struct wlr_renderer *wlr_renderer,
+		bool enabled, float alpha, float phase, float freq,
+		bool use_tw_texture, bool use_jnd) {
+	if (!wlr_renderer) {
+		return;
+	}
+	struct wlr_gles2_renderer *renderer = gles2_get_renderer(wlr_renderer);
+	renderer->watermark.enabled = enabled;
+	renderer->watermark.alpha = alpha;
+	renderer->watermark.phase = phase;
+	renderer->watermark.freq = freq;
+	renderer->watermark.use_tw_texture = use_tw_texture;
+	renderer->watermark.use_jnd = use_jnd;
+}
+
+void wlr_gles2_renderer_set_watermark_template(struct wlr_renderer *wlr_renderer,
+		const uint8_t *data, uint32_t width, uint32_t height) {
+	if (!wlr_renderer || !data || width == 0 || height == 0) {
+		return;
+	}
+	struct wlr_gles2_renderer *renderer = gles2_get_renderer(wlr_renderer);
+	if (!wlr_egl_is_current(renderer->egl)) {
+		return;
+	}
+
+	if (renderer->wm_texture == 0) {
+		glGenTextures(1, &renderer->wm_texture);
+	}
+	glBindTexture(GL_TEXTURE_2D, renderer->wm_texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, (GLsizei)width, (GLsizei)height, 0,
+		GL_LUMINANCE, GL_UNSIGNED_BYTE, data);
+	renderer->wm_texture_width = (int)width;
+	renderer->wm_texture_height = (int)height;
 }
 
 static const struct wlr_renderer_impl renderer_impl = {
@@ -537,6 +631,12 @@ struct wlr_renderer *wlr_gles2_renderer_create(struct wlr_egl *egl) {
 	wlr_renderer_init(&renderer->wlr_renderer, &renderer_impl);
 
 	renderer->egl = egl;
+	renderer->watermark.enabled = false;
+	renderer->watermark.alpha = 0.0f;
+	renderer->watermark.phase = 0.0f;
+	renderer->watermark.freq = 0.0f;
+	renderer->watermark.use_tw_texture = false;
+	renderer->watermark.use_jnd = false;
 	if (!wlr_egl_make_current(renderer->egl, EGL_NO_SURFACE, NULL)) {
 		free(renderer);
 		return NULL;
@@ -602,6 +702,13 @@ struct wlr_renderer *wlr_gles2_renderer_create(struct wlr_egl *egl) {
 	renderer->shaders.tex_rgba.invert_y = glGetUniformLocation(prog, "invert_y");
 	renderer->shaders.tex_rgba.tex = glGetUniformLocation(prog, "tex");
 	renderer->shaders.tex_rgba.alpha = glGetUniformLocation(prog, "alpha");
+	renderer->shaders.tex_rgba.wm_enable = glGetUniformLocation(prog, "wm_enable");
+	renderer->shaders.tex_rgba.wm_alpha = glGetUniformLocation(prog, "wm_alpha");
+	renderer->shaders.tex_rgba.wm_phase = glGetUniformLocation(prog, "wm_phase");
+	renderer->shaders.tex_rgba.wm_freq = glGetUniformLocation(prog, "wm_freq");
+	renderer->shaders.tex_rgba.wm_use_tex = glGetUniformLocation(prog, "wm_use_tex");
+	renderer->shaders.tex_rgba.wm_use_jnd = glGetUniformLocation(prog, "wm_use_jnd");
+	renderer->shaders.tex_rgba.wm_tex_sampler = glGetUniformLocation(prog, "wm_tex");
 
 	renderer->shaders.tex_rgbx.program = prog =
 		link_program(tex_vertex_src, tex_fragment_src_rgbx);
@@ -612,6 +719,13 @@ struct wlr_renderer *wlr_gles2_renderer_create(struct wlr_egl *egl) {
 	renderer->shaders.tex_rgbx.invert_y = glGetUniformLocation(prog, "invert_y");
 	renderer->shaders.tex_rgbx.tex = glGetUniformLocation(prog, "tex");
 	renderer->shaders.tex_rgbx.alpha = glGetUniformLocation(prog, "alpha");
+	renderer->shaders.tex_rgbx.wm_enable = glGetUniformLocation(prog, "wm_enable");
+	renderer->shaders.tex_rgbx.wm_alpha = glGetUniformLocation(prog, "wm_alpha");
+	renderer->shaders.tex_rgbx.wm_phase = glGetUniformLocation(prog, "wm_phase");
+	renderer->shaders.tex_rgbx.wm_freq = glGetUniformLocation(prog, "wm_freq");
+	renderer->shaders.tex_rgbx.wm_use_tex = glGetUniformLocation(prog, "wm_use_tex");
+	renderer->shaders.tex_rgbx.wm_use_jnd = glGetUniformLocation(prog, "wm_use_jnd");
+	renderer->shaders.tex_rgbx.wm_tex_sampler = glGetUniformLocation(prog, "wm_tex");
 
 	if (renderer->exts.egl_image_external_oes) {
 		renderer->shaders.tex_ext.program = prog =
@@ -623,6 +737,13 @@ struct wlr_renderer *wlr_gles2_renderer_create(struct wlr_egl *egl) {
 		renderer->shaders.tex_ext.invert_y = glGetUniformLocation(prog, "invert_y");
 		renderer->shaders.tex_ext.tex = glGetUniformLocation(prog, "tex");
 		renderer->shaders.tex_ext.alpha = glGetUniformLocation(prog, "alpha");
+		renderer->shaders.tex_ext.wm_enable = glGetUniformLocation(prog, "wm_enable");
+		renderer->shaders.tex_ext.wm_alpha = glGetUniformLocation(prog, "wm_alpha");
+		renderer->shaders.tex_ext.wm_phase = glGetUniformLocation(prog, "wm_phase");
+		renderer->shaders.tex_ext.wm_freq = glGetUniformLocation(prog, "wm_freq");
+		renderer->shaders.tex_ext.wm_use_tex = glGetUniformLocation(prog, "wm_use_tex");
+		renderer->shaders.tex_ext.wm_use_jnd = glGetUniformLocation(prog, "wm_use_jnd");
+		renderer->shaders.tex_ext.wm_tex_sampler = glGetUniformLocation(prog, "wm_tex");
 	}
 
 	POP_GLES2_DEBUG;
