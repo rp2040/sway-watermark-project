@@ -1,0 +1,1 @@
+"""Offline watermark prototype package."""
